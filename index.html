@@ -626,12 +626,28 @@ $('#btn-switch-testament').addEventListener('click', async ()=>{
   }
 
   S.testament = S.testament==='OT' ? 'NT' : 'OT';
-  S.progress = {};
   updateHeaderTexts();
   saveSession(true);
 
-  $('#loading').style.display = 'block';
-  $('#books').style.display = 'none';
+  // 이 성경에 대해 로컬에 저장해둔 예전 기록이 있으면 서버 응답을 기다리지 않고 바로 보여줌
+  let hadCache = false;
+  if(!S.guest){
+    try{
+      const cached = JSON.parse(localStorage.getItem(localKey())||'{}');
+      S.progress = cached;
+      if(Object.keys(cached).length) hadCache = true;
+    }catch(e){ S.progress = {}; }
+  }else{
+    S.progress = {};
+  }
+
+  if(hadCache){
+    $('#books').style.display = '';
+    render();
+  }else{
+    $('#loading').style.display = 'block';
+    $('#books').style.display = 'none';
+  }
 
   if(!S.guest) await loadProgress();
 
@@ -735,6 +751,21 @@ function localKey(){
   return 'gaonbit_progress_' + S.name + '_' + S.birth + '_' + S.testament;
 }
 
+/* 서버에서 받은 최신 진도로 교체하되, 아직 서버에 전송 안 된(디바운스 대기중인) 로컬 클릭은
+   덮어쓰지 않고 그 위에 다시 얹어서 보존한다. (캐시를 먼저 보여주는 동안 사용자가 클릭했는데,
+   그 직후 서버 응답이 도착해서 그 클릭이 조용히 사라지는 걸 방지하기 위함) */
+function mergeServerProgress(serverProgress){
+  const merged = serverProgress || {};
+  for(const key in S.pending){
+    const [bookId, ch] = key.split(':');
+    const localVal = (S.progress[bookId]||{})[ch];
+    if(!localVal) continue;
+    if(!merged[bookId]) merged[bookId] = {};
+    merged[bookId][ch] = localVal; // 서버 값 대신 아직 안 보낸 로컬 클릭 값을 유지
+  }
+  return merged;
+}
+
 async function loadProgress(){
   if(CONFIG.API_URL){
     try{
@@ -744,7 +775,7 @@ async function loadProgress(){
       });
       const res = await fetch(CONFIG.API_URL + '?' + q, { cache: 'no-store' });
       const json = await res.json();
-      if(json.ok){ S.progress = json.data.progress || {}; return; }
+      if(json.ok){ S.progress = mergeServerProgress(json.data.progress); return; }
       toast('진도를 불러오지 못했습니다: ' + json.error.message);
     }catch(e){
       toast('연결이 원활하지 않아 저장된 기록만 표시합니다.');
